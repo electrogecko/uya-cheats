@@ -30,6 +30,63 @@ static inline int playerIsLocal(Player *player)
     return player && player->isLocal;
 }
 
+static float clamp01(float value)
+{
+    if (value < 0.0f) return 0.0f;
+    if (value > 1.0f) return 1.0f;
+    return value;
+}
+
+static void approachFloat(float *value, float target, float step)
+{
+    if (*value < target) {
+        *value += step;
+        if (*value > target)
+            *value = target;
+    } else if (*value > target) {
+        *value -= step;
+        if (*value < target)
+            *value = target;
+    }
+}
+
+static u32 lerpColor(u32 a, u32 b, float t)
+{
+    t = clamp01(t);
+    int aA = (a >> 24) & 0xFF;
+    int aR = (a >> 16) & 0xFF;
+    int aG = (a >> 8) & 0xFF;
+    int aB = a & 0xFF;
+
+    int bA = (b >> 24) & 0xFF;
+    int bR = (b >> 16) & 0xFF;
+    int bG = (b >> 8) & 0xFF;
+    int bB = b & 0xFF;
+
+    int rA = aA + (int)((bA - aA) * t);
+    int rR = aR + (int)((bR - aR) * t);
+    int rG = aG + (int)((bG - aG) * t);
+    int rB = aB + (int)((bB - aB) * t);
+
+    return (rA << 24) | (rR << 16) | (rG << 8) | (rB & 0xFF);
+}
+
+static u32 getBoltCrankTextColor(float percent01)
+{
+    const u32 redColor = 0x80FF5050;
+    const u32 whiteColor = 0x80FFFFFF;
+    const u32 blueColor = 0x803060FF;
+
+    percent01 = clamp01(percent01);
+    if (percent01 <= 0.5f) {
+        float localT = percent01 / 0.5f;
+        return lerpColor(redColor, whiteColor, localT);
+    }
+
+    float localT = (percent01 - 0.5f) / 0.5f;
+    return lerpColor(whiteColor, blueColor, localT);
+}
+
 typedef struct DominationBase {
 	int state;
     int owner;
@@ -224,7 +281,8 @@ void drawBase(Moby *base)
             percentRounded = 100;
 
         snprintf(text, sizeof(text), "Bolt Crank %d%%", percentRounded);
-        u32 textColor = 0x80000000 | (pvar->color & 0x00ffffff);
+        float percent01 = pvar->boltCrankPercent * 0.01f;
+        u32 textColor = getBoltCrankTextColor(percent01);
         gfxScreenSpaceText(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.85f, 1, 1, textColor, text, -1, TEXT_ALIGN_MIDDLECENTER, FONT_BOLD);
     }
 }
@@ -312,10 +370,8 @@ void basePlayerUpdate(Moby *this)
     if (pvar->boltCrank && pvar->boltCrank->pVar) {
         M6695_BoltCrank_t *boltVars = (M6695_BoltCrank_t*)pvar->boltCrank->pVar;
         if (boltVars) {
-            float progress = boltVars->bias;
-            if (progress < 0.0f) progress = 0.0f;
-            if (progress > 1.0f) progress = 1.0f;
-            pvar->boltCrankPercent = progress * 100.0f;
+            float normalized = clamp01(boltVars->bias);
+            pvar->boltCrankPercent = normalized * 100.0f;
         }
     }
 }
@@ -332,8 +388,9 @@ void baseHandleCapture(Moby* this)
     DominationBase_t *pvars = (DominationBase_t*)this->pVar;
 
     // Safety check
-    if (!pvars || !pvars->boltCrank)
+    if (!pvars || !pvars->boltCrank || !pvars->boltCrank->pVar)
         return;
+    M6695_BoltCrank_t *boltVars = (M6695_BoltCrank_t*)pvars->boltCrank->pVar;
 
     // Get first capturing player and team
     for (i = 0; i < 8; ++i) {
@@ -356,12 +413,42 @@ void baseHandleCapture(Moby* this)
         }
     }
 
+    float targetBias = 0.5f;
+    float step = 0.01f;
     if (!isContested && capturingTeam != -1) {
         pvars->owner = capturingTeam;
-        *(u32*)(pvars->boltCrank->pVar) = capturingTeam;
+
+        if (capturingCount > 1) {
+            step *= capturingCount;
+            if (step > 0.05f)
+                step = 0.05f;
+        }
+
+        if (capturingTeam == TEAM_BLUE) {
+            targetBias = 0.0f;
+        } else if (capturingTeam == TEAM_RED) {
+            targetBias = 1.0f;
+        } else {
+            targetBias = 0.5f;
+        }
     } else {
         pvars->state = 5;
+        step = 0.005f;
     }
+
+    approachFloat(&boltVars->bias, targetBias, step);
+    boltVars->bias = clamp01(boltVars->bias);
+    *(float*)(pvars->boltCrank->pVar) = boltVars->bias;
+
+    printf("\n[Dom] base=%p capTeam=%d contested=%d count=%d target=%.3f bias=%.3f step=%.3f mem=0x%08X",
+        this,
+        capturingTeam,
+        isContested,
+        capturingCount,
+        targetBias,
+        boltVars->bias,
+        step,
+        *(u32*)(pvars->boltCrank->pVar));
 }
 
 void updateBase(Moby* this)
