@@ -25,6 +25,11 @@
 #define MIN_SEGMENTS (8)
 #define BASE_RADIUS (20.0f)
 
+static inline int playerIsLocal(Player *player)
+{
+    return player && player->isLocal;
+}
+
 typedef struct DominationBase {
 	int state;
     int owner;
@@ -33,6 +38,8 @@ typedef struct DominationBase {
     Player *players[8];
 	int color;
     float scrolling;
+    float boltCrankPercent;
+    int localPlayerInside;
 } DominationBase_t;
 
 typedef struct DominationInfo {
@@ -42,6 +49,8 @@ typedef struct DominationInfo {
     Moby *bases[8];
 } DominationInfo_t;
 DominationInfo_t domInfo;
+
+Moby *spawnBaseMobies(Moby *node, Moby *boltCrank);
 
 void vector_rodrigues(VECTOR output, VECTOR v, VECTOR axis, float angle)
 {
@@ -87,6 +96,13 @@ void getBases(void)
                 domInfo.bases[i] = (Moby*)base;
                 ++domInfo.baseCount;
                 printf("\nn: %d, base: %08x", domInfo.baseCount, &domInfo.bases[i]);
+                char buf[32];
+                snprintf(buf, sizeof(buf), "ASDF asdf ASDF asdf");
+                //int gfxScreenSpaceText(float x, float y, float scaleX, float scaleY, u32 color, const char* string, int length, int alignment, enum FontNames font);
+                //gfxScreenSpaceText(479, 57, 0.8, 0.8, 0x80FFFFFF, buf, -1, 1);
+                //gfxScreenSpaceText(SCREEN_WIDTH * 0.1, 1, 1, 1, 0x80ffffff, buf, 32, TEXT_ALIGN_BOTTOMRIGHT, FONT_BOLD);
+                //gfxScreenSpaceText(SCREEN_WIDTH * 0.1, 1, 1, 1, 0x80ffffff, buf,1, 1, 1);
+
             }
 			++i;
 		}
@@ -103,8 +119,15 @@ void drawBase(Moby *base)
     int i, k, j, s;
     QuadDef quad[3];
     // get texture info (tex0, tex1, clamp, alpha)
-    gfxSetupEffectTex(&quad[0], FX_TIRE_TRACKS + 1, 0, 0x80);
+    //gfxSetupEffectTex(&quad[0], FX_TIRE_TRACKS + 1, 0, 0x80);
+    gfxSetupEffectTex(&quad[0], FX_RETICLE_5, 0, 0x80);
     gfxSetupEffectTex(&quad[2], FX_CIRLCE_NO_FADED_EDGE, 0, 0x80);
+
+    //0x80ffffff white
+    
+    /*char buf[32];
+    snprintf(buf, sizeof(buf), "Test Text at drawBase ");
+    gfxScreenSpaceText(SCREEN_WIDTH * 0.1, 88, 1, 1, 0x80ffffff, buf, 10, TEXT_ALIGN_BOTTOMRIGHT, FONT_BOLD);*/
 
     quad[0].uv[0] = (UV_t){0, 0}; // bottom left (-, -)
     quad[0].uv[1] = (UV_t){0, 1}; // top left (-, +)
@@ -203,6 +226,20 @@ void drawBase(Moby *base)
     vector_copy(quad[2].point[3], corners[3]);
 
     gfxDrawQuad(quad[2], NULL);
+
+    // show capture progress when a local player is inside the base radius
+    if (pvar->localPlayerInside) {
+        char text[32];
+        int percentRounded = (int)(pvar->boltCrankPercent + 0.5f);
+        if (percentRounded < 0)
+            percentRounded = 0;
+        if (percentRounded > 100)
+            percentRounded = 100;
+
+        snprintf(text, sizeof(text), "Bolt Crank %d%%", percentRounded);
+        u32 textColor = 0x80000000 | (pvar->color & 0x00ffffff);
+        gfxScreenSpaceText(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.85f, 1, 1, textColor, text, -1, TEXT_ALIGN_MIDDLECENTER, FONT_BOLD);
+    }
 }
 
 int baseCheckIfInside(VECTOR basePos, VECTOR playerPos)
@@ -217,6 +254,7 @@ int baseCheckIfInside(VECTOR basePos, VECTOR playerPos)
     // check radius
     float radius = domInfo.baseRaddius / 2;
     float distSq = delta[0] * delta[0] + delta[1] * delta[1];
+
     return (distSq <= radius * radius);
 }
 
@@ -225,6 +263,7 @@ void basePlayerUpdate(Moby *this)
     DominationBase_t *pvar = (DominationBase_t*)this->pVar;
     GameSettings *gs = gameGetSettings();
     int i, j;
+    int localPlayerInside = 0;
     
     for (i = 0; i < GAME_MAX_PLAYERS; ++i) {
         Player *player = playerGetFromSlot(i);
@@ -233,6 +272,9 @@ void basePlayerUpdate(Moby *this)
 
         int in = baseCheckIfInside(this->position, player->playerPosition);
         if (in) {
+            if (playerIsLocal(player))
+                localPlayerInside = 1;
+
             // Check if player is already in the array
             int alreadyIn = 0;
             for (j = 0; j < 8; ++j) {
@@ -261,6 +303,8 @@ void basePlayerUpdate(Moby *this)
             }
         }
     }
+
+    pvar->localPlayerInside = localPlayerInside;
     
     // Set color based on first player in array
     // pvar->color = 0x00ffffff; // Default white
@@ -275,6 +319,18 @@ void basePlayerUpdate(Moby *this)
     pvar->color = 0x00ffffff;
     if (pvar->owner > -1)
         pvar->color = TEAM_COLORS[pvar->owner];
+
+    // cache capture percentage for HUD drawing
+    pvar->boltCrankPercent = 0;
+    if (pvar->boltCrank && pvar->boltCrank->pVar) {
+        M6695_BoltCrank_t *boltVars = (M6695_BoltCrank_t*)pvar->boltCrank->pVar;
+        if (boltVars) {
+            float progress = boltVars->bias;
+            if (progress < 0.0f) progress = 0.0f;
+            if (progress > 1.0f) progress = 1.0f;
+            pvar->boltCrankPercent = progress * 100.0f;
+        }
+    }
 }
 
 void baseHandleCapture(Moby* this)
@@ -343,7 +399,7 @@ void updateBase(Moby* this)
 Moby *spawnBaseMobies(Moby *node, Moby *boltCrank)
 {
     Moby *moby = mobySpawn(0x1c0d, sizeof(DominationBase_t));
-    if (!moby) return;
+    if (!moby) return NULL;
 
     moby->pUpdate = &updateBase;
     vector_copy(moby->position, boltCrank->position);
@@ -360,11 +416,18 @@ Moby *spawnBaseMobies(Moby *node, Moby *boltCrank)
     base->color = 0x00ffffff;
     base->owner = -1;
 
+    // Runs once 
+    //char buf[32];
+    //snprintf(buf, sizeof(buf), "MMMMMMMM");
+    //gfxScreenSpaceText(SCREEN_WIDTH * 0.1, 88, 1, 1, 0x80ffffff, buf, 10, TEXT_ALIGN_BOTTOMRIGHT, FONT_BOLD);
+
+
     return moby;
 }
 
 void domination(void)
 {
+    //printf("\nn xxxxxxxxxxxxxxxxxxx");
 	if (!isInGame())
 		return;
 
