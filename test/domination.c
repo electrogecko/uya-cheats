@@ -21,9 +21,17 @@
 #include <libuya/guber.h>
 #include <libuya/sound.h>
 
-#define MAX_SEGMENTS (64)
-#define MIN_SEGMENTS (8)
-#define BASE_RADIUS (20.0f)
+#define MAX_SEGMENTS                        (64)
+#define MIN_SEGMENTS                        (8)
+#define BASE_RADIUS                         (20.0f)
+#define DOMINATION_BASE_ALPHA               (64)    // ~25% alpha keeps ring visible without bloom
+#define DOMINATION_CAPTURE_STEP_BASE        (0.01f)
+#define DOMINATION_CAPTURE_STEP_MAX         (0.05f)
+#define DOMINATION_OWNER_DECAY_STEP         (0.0025f)
+#define DOMINATION_NEUTRAL_DECAY_STEP       (0.0010f)
+#define DOMINATION_NEUTRAL_RETURN_TO_CENTER (1)     // 1 => drift to 50%, 0 => hold current bias when neutral
+#define DOMINATION_CAPTURE_COMPLETE_LOW     (0.02f)
+#define DOMINATION_CAPTURE_COMPLETE_HIGH    (0.98f)
 
 static inline int playerIsLocal(Player *player)
 {
@@ -71,11 +79,16 @@ static u32 lerpColor(u32 a, u32 b, float t)
     return (rA << 24) | (rR << 16) | (rG << 8) | (rB & 0xFF);
 }
 
+static inline u32 applyBaseAlpha(u32 color)
+{
+    return (DOMINATION_BASE_ALPHA << 24) | (color & 0x00FFFFFF);
+}
+
 static u32 getBoltCrankTextColor(float percent01)
 {
-    const u32 redColor = 0x80FF5050;
-    const u32 whiteColor = 0x80FFFFFF;
-    const u32 blueColor = 0x803060FF;
+    const u32 redColor = applyBaseAlpha(0x00FF5050);
+    const u32 whiteColor = applyBaseAlpha(0x00FFFFFF);
+    const u32 blueColor = applyBaseAlpha(0x003060FF);
 
     percent01 = clamp01(percent01);
     if (percent01 <= 0.5f) {
@@ -170,8 +183,16 @@ void drawBase(Moby *base)
     QuadDef quad[3];
     // get texture info (tex0, tex1, clamp, alpha)
     //gfxSetupEffectTex(&quad[0], FX_TIRE_TRACKS + 1, 0, 0x80);
-    gfxSetupEffectTex(&quad[0], FX_RETICLE_5, 0, 0x80);
+    //gfxSetupEffectTex(&quad[0], FX_CIRCLE_OUTLINE_6, 0, 0x80);
+    //gfxSetupEffectTex(&quad[0], FX_RETICLE_4, 0, 0x80);
+    gfxSetupEffectTex(&quad[0], FX_UNK_2, 0, 0x80); // nice bars  - my choice
+    //gfxSetupEffectTex(&quad[0], FX_SQUARE_WHITE_WITH_TRANSPARENT_DOTS, 0, 0x80);
+    //gfxSetupEffectTex(&quad[0], FX_VISIBOMB_HORIZONTAL_LINES, 0, 0x80); //circless
+    //gfxSetupEffectTex(&quad[0], FX_RETICLE_5, 0, 0x80);
+
     gfxSetupEffectTex(&quad[2], FX_CIRLCE_NO_FADED_EDGE, 0, 0x80);
+
+    
 
     quad[0].uv[0] = (UV_t){0, 0}; // bottom left (-, -)
     quad[0].uv[1] = (UV_t){0, 1}; // top left (-, +)
@@ -281,8 +302,7 @@ void drawBase(Moby *base)
             percentRounded = 100;
 
         snprintf(text, sizeof(text), "Bolt Crank %d%%", percentRounded);
-        float percent01 = pvar->boltCrankPercent * 0.01f;
-        u32 textColor = getBoltCrankTextColor(percent01);
+        u32 textColor = (0x80 << 24) | (pvar->color & 0x00ffffff);
         gfxScreenSpaceText(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.85f, 1, 1, textColor, text, -1, TEXT_ALIGN_MIDDLECENTER, FONT_BOLD);
     }
 }
@@ -360,12 +380,7 @@ void basePlayerUpdate(Moby *this)
     //     }
     // }
 
-    // set color based on base owner team
-    pvar->color = 0x00ffffff;
-    if (pvar->owner > -1)
-        pvar->color = TEAM_COLORS[pvar->owner];
-
-    // cache capture percentage for HUD drawing
+    // cache capture percentage for HUD drawing and color
     pvar->boltCrankPercent = 0;
     if (pvar->boltCrank && pvar->boltCrank->pVar) {
         M6695_BoltCrank_t *boltVars = (M6695_BoltCrank_t*)pvar->boltCrank->pVar;
@@ -374,6 +389,10 @@ void basePlayerUpdate(Moby *this)
             pvar->boltCrankPercent = normalized * 100.0f;
         }
     }
+
+    // set color based purely on capture progress
+    float percent01 = pvar->boltCrankPercent * 0.01f;
+    pvar->color = getBoltCrankTextColor(percent01);
 }
 
 void baseHandleCapture(Moby* this)
@@ -413,15 +432,16 @@ void baseHandleCapture(Moby* this)
         }
     }
 
-    float targetBias = 0.5f;
-    float step = 0.01f;
+    float targetBias = boltVars->bias;
+    float step = DOMINATION_NEUTRAL_DECAY_STEP; 
     if (!isContested && capturingTeam != -1) {
-        pvars->owner = capturingTeam;
 
+        step = DOMINATION_CAPTURE_STEP_BASE;
         if (capturingCount > 1) {
-            step *= capturingCount;
-            if (step > 0.05f)
-                step = 0.05f;
+            float scaledStep = step * capturingCount;
+            if (scaledStep > DOMINATION_CAPTURE_STEP_MAX)
+                scaledStep = DOMINATION_CAPTURE_STEP_MAX;
+            step = scaledStep;
         }
 
         if (capturingTeam == TEAM_BLUE) {
@@ -433,12 +453,27 @@ void baseHandleCapture(Moby* this)
         }
     } else {
         pvars->state = 5;
-        step = 0.005f;
+        if (pvars->owner == TEAM_BLUE) {
+            targetBias = 0.0f;
+            step = DOMINATION_OWNER_DECAY_STEP;
+        } else if (pvars->owner == TEAM_RED) {
+            targetBias = 1.0f;
+            step = DOMINATION_OWNER_DECAY_STEP;
+        } else {
+            targetBias = DOMINATION_NEUTRAL_RETURN_TO_CENTER ? 0.5f : boltVars->bias;
+            step = DOMINATION_NEUTRAL_DECAY_STEP;
+        }
     }
 
     approachFloat(&boltVars->bias, targetBias, step);
     boltVars->bias = clamp01(boltVars->bias);
     *(float*)(pvars->boltCrank->pVar) = boltVars->bias;
+
+    if (!isContested && capturingTeam == TEAM_BLUE && boltVars->bias <= DOMINATION_CAPTURE_COMPLETE_LOW) {
+        pvars->owner = TEAM_BLUE;
+    } else if (!isContested && capturingTeam == TEAM_RED && boltVars->bias >= DOMINATION_CAPTURE_COMPLETE_HIGH) {
+        pvars->owner = TEAM_RED;
+    }
 
     printf("\n[Dom] base=%p capTeam=%d contested=%d count=%d target=%.3f bias=%.3f step=%.3f mem=0x%08X",
         this,
