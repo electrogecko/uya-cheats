@@ -35,7 +35,7 @@
 #define DOMINATION_RING_ALPHA_SCALE               (1.0f) // 1 for default 
 #define DOMINATION_RING_HEIGHT                    (1.0f) // 2 for defualt
 #define DOMINATION_RING_ALPHA_SCALE_NEUTRAL       (1.0f)
-#define DOMINATION_RING_HEIGHT_NEUTRAL            (1.0f)
+#define DOMINATION_RING_HEIGHT_NEUTRAL            (2.0f)
 
 static inline int playerIsLocal(Player *player)
 {
@@ -181,9 +181,14 @@ void getBases(void)
 void drawBase(Moby *base)
 {
     DominationBase_t *pvar = base->pVar;
-	float scrollQuad = pvar->scrolling;
+    float scrollQuad = pvar->scrolling;
     u32 baseColor = pvar->color;
-    
+
+    float percent01 = clamp01(pvar->boltCrankPercent * 0.01f);
+    float captureBlend = fabsf(percent01 - 0.5f) * 2.0f;
+    float alphaScale = (DOMINATION_RING_ALPHA_SCALE_NEUTRAL * (1.0f - captureBlend)) + (DOMINATION_RING_ALPHA_SCALE * captureBlend);
+    float ringHeight = (DOMINATION_RING_HEIGHT_NEUTRAL * (1.0f - captureBlend)) + (DOMINATION_RING_HEIGHT * captureBlend);
+
     int i, k, j, s;
     QuadDef quad[3];
     // get texture info (tex0, tex1, clamp, alpha)
@@ -218,14 +223,14 @@ void drawBase(Moby *base)
     quad[1] = quad[0];
 
     // set seperate rgbas
-    int alphaOuterNear = (int)(0x00 * DOMINATION_RING_ALPHA_SCALE) & 0xFF;
-    int alphaOuterFar = (int)(0x30 * DOMINATION_RING_ALPHA_SCALE);
+    int alphaOuterNear = (int)(0x00 * alphaScale) & 0xFF;
+    int alphaOuterFar = (int)(0x30 * alphaScale);
     if (alphaOuterFar > 0xFF) alphaOuterFar = 0xFF;
-    int alphaMidNear = (int)(0x50 * DOMINATION_RING_ALPHA_SCALE);
+    int alphaMidNear = (int)(0x50 * alphaScale);
     if (alphaMidNear > 0xFF) alphaMidNear = 0xFF;
-    int alphaMidFar = (int)(0x20 * DOMINATION_RING_ALPHA_SCALE);
+    int alphaMidFar = (int)(0x20 * alphaScale);
     if (alphaMidFar > 0xFF) alphaMidFar = 0xFF;
-    int alphaCenter = (int)(0x30 * DOMINATION_RING_ALPHA_SCALE);
+    int alphaCenter = (int)(0x30 * alphaScale);
     if (alphaCenter > 0xFF) alphaCenter = 0xFF;
 
     u32 baseRgb = baseColor & 0x00FFFFFF;
@@ -240,7 +245,7 @@ void drawBase(Moby *base)
     vector_copy(center, base->position);
     VECTOR xAxis = {domInfo.baseRaddius, 0, 0, 0};
     VECTOR zAxis = {0, domInfo.baseRaddius, 0, 0};
-    VECTOR yAxis = {0, 0, DOMINATION_RING_HEIGHT, 0};
+    VECTOR yAxis = {0, 0, ringHeight, 0};
     
     vector_scale(halfX, xAxis, .5);
     vector_scale(halfZ, zAxis, .5);
@@ -254,7 +259,7 @@ void drawBase(Moby *base)
 
     // scale x, y of texture
     vector_scale(tempRight, tempRight, 1);
-    vector_scale(tempUp, yAxis, DOMINATION_RING_HEIGHT * 0.5f);
+    vector_scale(tempUp, yAxis, ringHeight * 0.5f);
 
     float segmentSize = 1;
     int segments = (int)((2 * MATH_PI * fRadius) / segmentSize);
@@ -267,7 +272,7 @@ void drawBase(Moby *base)
 		for (i = 0; i < segments; ++i) {
 			vector_add(tempCenter, center, vRadius);
             // offset quad[1] by configured height
-            tempCenter[2] += k * DOMINATION_RING_HEIGHT;
+            tempCenter[2] += k * ringHeight;
 			// create vector for each point.
 			for (j = 0; j < 4; ++j) {
 				quad[k].point[j][0] = tempCenter[0] + signs[j][0] * tempRight[0] + signs[j][1] * tempUp[0];
