@@ -36,6 +36,7 @@
 #define DOMINATION_RING_HEIGHT                    (1.0f) // 2 for defualt
 #define DOMINATION_RING_ALPHA_SCALE_NEUTRAL       (1.0f)
 #define DOMINATION_RING_HEIGHT_NEUTRAL            (2.0f)
+#define DOMINATION_NODE_Z                         (10.0f)
 
 static inline int playerIsLocal(Player *player)
 {
@@ -415,6 +416,15 @@ void basePlayerUpdate(Moby *this)
     // set color based purely on capture progress
     float percent01 = pvar->boltCrankPercent * 0.01f;
     pvar->color = getBoltCrankTextColor(percent01);
+
+    // Move the Siege Moby node collision out of the way
+    // Player *debug = playerGetFromSlot(0); //DBUG
+    // if (debug && playerPadGetButtonDown(debug, PAD_UP) > 0 && pvar->node && !pvar->nodeAdjusted) { //DBUG
+    if (!pvar->nodeAdjusted && pvar->node) {
+        pvar->node->collData = NULL;
+        pvar->nodeAdjusted = 1;
+        printf("\n[Dom] disabled node collision for testing.");
+    }
 }
 
 void baseHandleCapture(Moby* this)
