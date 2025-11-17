@@ -32,6 +32,10 @@
 #define DOMINATION_NEUTRAL_RETURN_TO_CENTER (1)     // 1 => drift to 50%, 0 => hold current bias when neutral
 #define DOMINATION_CAPTURE_COMPLETE_LOW     (0.02f)
 #define DOMINATION_CAPTURE_COMPLETE_HIGH    (0.98f)
+#define DOMINATION_RING_ALPHA_SCALE               (1.0f) // 1 for default 
+#define DOMINATION_RING_HEIGHT                    (1.0f) // 2 for defualt
+#define DOMINATION_RING_ALPHA_SCALE_NEUTRAL       (1.0f)
+#define DOMINATION_RING_HEIGHT_NEUTRAL            (1.0f)
 
 static inline int playerIsLocal(Player *player)
 {
@@ -110,6 +114,7 @@ typedef struct DominationBase {
     float scrolling;
     float boltCrankPercent;
     int localPlayerInside;
+    int nodeAdjusted;
 } DominationBase_t;
 
 typedef struct DominationInfo {
@@ -213,17 +218,29 @@ void drawBase(Moby *base)
     quad[1] = quad[0];
 
     // set seperate rgbas
-    quad[0].rgba[0] = quad[0].rgba[1] = (0x00 << 24) | baseColor;
-    quad[0].rgba[2] = quad[0].rgba[3] = (0x30 << 24) | baseColor;
-    quad[1].rgba[0] = quad[1].rgba[1] = (0x50 << 24) | baseColor;
-    quad[1].rgba[2] = quad[1].rgba[3] = (0x20 << 24) | baseColor;
-    quad[2].rgba[0] = quad[2].rgba[1] = quad[2].rgba[2] = quad[2].rgba[3] = (0x30 << 24) | baseColor;
+    int alphaOuterNear = (int)(0x00 * DOMINATION_RING_ALPHA_SCALE) & 0xFF;
+    int alphaOuterFar = (int)(0x30 * DOMINATION_RING_ALPHA_SCALE);
+    if (alphaOuterFar > 0xFF) alphaOuterFar = 0xFF;
+    int alphaMidNear = (int)(0x50 * DOMINATION_RING_ALPHA_SCALE);
+    if (alphaMidNear > 0xFF) alphaMidNear = 0xFF;
+    int alphaMidFar = (int)(0x20 * DOMINATION_RING_ALPHA_SCALE);
+    if (alphaMidFar > 0xFF) alphaMidFar = 0xFF;
+    int alphaCenter = (int)(0x30 * DOMINATION_RING_ALPHA_SCALE);
+    if (alphaCenter > 0xFF) alphaCenter = 0xFF;
+
+    u32 baseRgb = baseColor & 0x00FFFFFF;
+
+    quad[0].rgba[0] = quad[0].rgba[1] = (alphaOuterNear << 24) | baseRgb;
+    quad[0].rgba[2] = quad[0].rgba[3] = (alphaOuterFar << 24) | baseRgb;
+    quad[1].rgba[0] = quad[1].rgba[1] = (alphaMidNear << 24) | baseRgb;
+    quad[1].rgba[2] = quad[1].rgba[3] = (alphaMidFar << 24) | baseRgb;
+    quad[2].rgba[0] = quad[2].rgba[1] = quad[2].rgba[2] = quad[2].rgba[3] = (alphaCenter << 24) | baseRgb;
 
     VECTOR center, tempCenter, tempRight, tempUp, halfX, halfZ, vRadius;
     vector_copy(center, base->position);
     VECTOR xAxis = {domInfo.baseRaddius, 0, 0, 0};
     VECTOR zAxis = {0, domInfo.baseRaddius, 0, 0};
-    VECTOR yAxis = {0, 0, 2, 0};
+    VECTOR yAxis = {0, 0, DOMINATION_RING_HEIGHT, 0};
     
     vector_scale(halfX, xAxis, .5);
     vector_scale(halfZ, zAxis, .5);
@@ -237,7 +254,7 @@ void drawBase(Moby *base)
 
     // scale x, y of texture
     vector_scale(tempRight, tempRight, 1);
-    vector_scale(tempUp, yAxis, 1);
+    vector_scale(tempUp, yAxis, DOMINATION_RING_HEIGHT * 0.5f);
 
     float segmentSize = 1;
     int segments = (int)((2 * MATH_PI * fRadius) / segmentSize);
@@ -249,8 +266,8 @@ void drawBase(Moby *base)
 		vector_copy(vRadius, halfX);
 		for (i = 0; i < segments; ++i) {
 			vector_add(tempCenter, center, vRadius);
-			// offset quad[1] by 3
-			tempCenter[2] += k * 2;
+            // offset quad[1] by configured height
+            tempCenter[2] += k * DOMINATION_RING_HEIGHT;
 			// create vector for each point.
 			for (j = 0; j < 4; ++j) {
 				quad[k].point[j][0] = tempCenter[0] + signs[j][0] * tempRight[0] + signs[j][1] * tempUp[0];
