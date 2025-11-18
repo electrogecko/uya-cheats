@@ -335,10 +335,13 @@ int baseCheckIfInside(VECTOR basePos, VECTOR playerPos)
     VECTOR delta;
     vector_subtract(delta, playerPos, basePos);
 
+    //printf("[Dom] delta = (%d, %d, %d)\n", (int)delta[0], (int)delta[1], (int)delta[2]);   
+    // 
     // check Y axis
-    if (delta[2] < -1.25 || delta[2] > basePos[2] + 6) {
+    if (delta[2] < -1.25 || delta[2] > 8) {
         return 0;
     }
+
     // check radius
     float radius = domInfo.baseRaddius / 2;
     float distSq = delta[0] * delta[0] + delta[1] * delta[1];
@@ -357,6 +360,11 @@ void basePlayerUpdate(Moby *this)
         Player *player = playerGetFromSlot(i);
         if (!player || playerIsDead(player))
             continue;
+
+        if (player->vehicle)
+            //int oClass = player->vehicle->pMoby ? player->vehicle->pMoby->oClass : -1;
+            //printf("[Dom] Vehicle On Me => slot:%d oClass:%#x\n", i, oClass);
+            continue; // no capturing while in vehicle
 
         int in = baseCheckIfInside(this->position, player->playerPosition);
         if (in) {
