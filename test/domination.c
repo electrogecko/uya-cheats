@@ -179,6 +179,34 @@ void getBases(void)
 	}
 }
 
+static void drawDominationHud(void)
+{
+    int i;
+    for (i = 0; i < domInfo.baseCount; ++i) {
+        Moby *base = domInfo.bases[i];
+        if (!base || !base->pVar)
+            continue;
+
+        DominationBase_t *pvar = (DominationBase_t*)base->pVar;
+        if (!pvar->localPlayerInside)
+            continue;
+
+        int percentRounded = (int)(pvar->boltCrankPercent + 0.5f);
+        if (percentRounded < 0)
+            percentRounded = 0;
+        if (percentRounded > 100)
+            percentRounded = 100;
+
+        char text[32];
+        snprintf(text, sizeof(text), "Bolt Crank %d%%", percentRounded);
+        u32 textColor = (0x80 << 24) | (pvar->color & 0x00ffffff);
+        gfxScreenSpaceText(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.85f, 1, 1, textColor, text, -1, TEXT_ALIGN_MIDDLECENTER, FONT_BOLD);
+
+        // Only draw once per frame (assume player is in at most one base)
+        break;
+    }
+}
+
 void drawBase(Moby *base)
 {
     DominationBase_t *pvar = base->pVar;
@@ -314,20 +342,6 @@ void drawBase(Moby *base)
     vector_copy(quad[2].point[3], corners[3]);
 
     gfxDrawQuad(quad[2], NULL);
-
-    // show capture progress when a local player is inside the base radius
-    if (pvar->localPlayerInside) {
-        char text[32];
-        int percentRounded = (int)(pvar->boltCrankPercent + 0.5f);
-        if (percentRounded < 0)
-            percentRounded = 0;
-        if (percentRounded > 100)
-            percentRounded = 100;
-
-        snprintf(text, sizeof(text), "Bolt Crank %d%%", percentRounded);
-        u32 textColor = (0x80 << 24) | (pvar->color & 0x00ffffff);
-        gfxScreenSpaceText(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.85f, 1, 1, textColor, text, -1, TEXT_ALIGN_MIDDLECENTER, FONT_BOLD);
-    }
 }
 
 int baseCheckIfInside(VECTOR basePos, VECTOR playerPos)
@@ -579,4 +593,7 @@ void domination(void)
 		domInfo.gameState = 1;
 		domInfo.baseRaddius = BASE_RADIUS;
 	}
+
+    // Draw HUD text once per frame so GS state changes don't affect world quads
+    drawDominationHud();
 }
